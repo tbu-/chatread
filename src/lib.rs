@@ -24,8 +24,10 @@ use std::os::raw::c_int;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
+use std::slice;
 use std::str;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 use std::thread;
 
@@ -120,29 +122,29 @@ fn install_sigwinch_handler() -> Result<(), Error> {
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
+static REAL_STDOUT: AtomicIsize = AtomicIsize::new(-1);
+static PIPE_STDIN_WRITE: AtomicIsize = AtomicIsize::new(-1);
 
 extern "C" fn linehandler(raw_line: *mut c_char) {
     unsafe {
         let raw_line = Free(raw_line);
-        let line;
-        if !raw_line.is_null() {
-            line = CStr::from_ptr(*raw_line).to_bytes();
-        } else {
-            line = b"exit";
-        }
-        if line == b"exit" {
-            //RUNNING.store(false, Ordering::Relaxed);
-            //sys::rl_callback_handler_remove();
-        }
         if !raw_line.is_null() {
             sys::add_history(*raw_line);
         }
-        let mut stdout = fd_as_file(1);
-        if raw_line.is_null() {
-            stdout.write_all(b"exit\n").o("write(1, \"exit\\n\")").unwrap();
+        let line: &[u8];
+        if !raw_line.is_null() {
+            let len = libc::strlen(*raw_line) + 1;
+            let mline = slice::from_raw_parts_mut(*raw_line as *mut u8, len);
+            *mline.last_mut().unwrap() = b'\n';
+            line = mline;
         } else {
-            writeln!(stdout, "input line: {}", String::from_utf8_lossy(line)).o("write(1, ...)").unwrap();
+            let mut real_stdout = fd_as_file(REAL_STDOUT.load(Ordering::Relaxed) as i32);
+            real_stdout.write_all(b"exit\n").o("write(real_stdout, \"exit\\n\")").unwrap();
+            line = b"\0\n";
         }
+        let fd = PIPE_STDIN_WRITE.load(Ordering::Relaxed) as i32;
+        let mut pipe_stdin_write = fd_as_file(fd);
+        pipe_stdin_write.write_all(line).o("write(pipe_stdin_write, ...)").unwrap();
     }
 }
 
@@ -313,6 +315,8 @@ fn setup_impl<'a>(options: &Chatread<'a>) -> Result<(), Error> {
         pipe_stdin_write: pipe_stdin.1,
         shutdown: shutdown_registration,
     };
+    REAL_STDOUT.store(data.real_stdout.as_raw_fd() as isize, Ordering::Relaxed);
+    PIPE_STDIN_WRITE.store(data.pipe_stdin_write.as_raw_fd() as isize, Ordering::Relaxed);
 
     let thread_handle = thread::spawn(|| {
         match loop_(data) {
@@ -347,11 +351,6 @@ pub fn teardown() -> Result<(), Error> {
     Ok(())
 }
 
-#[no_mangle]
-pub extern "C" fn chatread_options_new() -> *mut Chatread<'static> {
-    Box::into_raw(Box::new(Chatread::new()))
-}
-
 fn result_to_c<T>(res: Result<(), T>) -> c_int {
     if res.is_ok() {
         0
@@ -365,6 +364,11 @@ pub extern "C" fn chatread_options_prompt(chatread: *mut Chatread<'static>, prom
     let chatread = unsafe { &mut *chatread };
     let prompt = unsafe { CStr::from_ptr(prompt).to_bytes() };
     result_to_c(str::from_utf8(prompt).map(|p| chatread.prompt = Some(p)))
+}
+
+#[no_mangle]
+pub extern "C" fn chatread_options_new() -> *mut Chatread<'static> {
+    Box::into_raw(Box::new(Chatread::new()))
 }
 
 #[no_mangle]
