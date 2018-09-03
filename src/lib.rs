@@ -23,6 +23,8 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
+use std::ptr;
+use std::str;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -255,6 +257,18 @@ pub fn setup() -> Result<(), Error> {
     Chatread::new().setup()
 }
 
+fn make_c_streams_linebuffered() {
+    extern "C" {
+        // Missing from the `libc` crate for some unknown reason...
+        pub static mut stdin: *mut libc::FILE;
+        pub static mut stdout: *mut libc::FILE;
+    }
+    unsafe {
+        libc::setvbuf(stdin, ptr::null_mut(), libc::_IOLBF, libc::BUFSIZ as usize);
+        libc::setvbuf(stdout, ptr::null_mut(), libc::_IOLBF, libc::BUFSIZ as usize);
+    }
+}
+
 static ALREADY_SET_UP: AtomicBool = AtomicBool::new(false);
 static COMPLETELY_SET_UP: AtomicBool = AtomicBool::new(false);
 static mut THREAD_HANDLE: Option<thread::JoinHandle<()>> = None;
@@ -289,6 +303,8 @@ fn setup_impl<'a>(options: &Chatread<'a>) -> Result<(), Error> {
         let cprompt = CString::new(options.prompt.unwrap_or("> ")).unwrap();
         sys::rl_callback_handler_install(cprompt.as_ptr(), Some(linehandler));
     }
+
+    make_c_streams_linebuffered();
 
     let data = Data {
         real_stdin: stdin_clone,
@@ -332,11 +348,37 @@ pub fn teardown() -> Result<(), Error> {
 }
 
 #[no_mangle]
+pub extern "C" fn chatread_options_new() -> *mut Chatread<'static> {
+    Box::into_raw(Box::new(Chatread::new()))
+}
+
+fn result_to_c<T>(res: Result<(), T>) -> c_int {
+    if res.is_ok() {
+        0
+    } else {
+        1
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn chatread_options_prompt(chatread: *mut Chatread<'static>, prompt: *const c_char) -> c_int {
+    let chatread = unsafe { &mut *chatread };
+    let prompt = unsafe { CStr::from_ptr(prompt).to_bytes() };
+    result_to_c(str::from_utf8(prompt).map(|p| chatread.prompt = Some(p)))
+}
+
+#[no_mangle]
+pub extern "C" fn chatread_options_setup(chatread: *mut Chatread<'static>) -> c_int {
+    let chatread = unsafe { ptr::read(chatread) };
+    result_to_c(chatread.setup())
+}
+
+#[no_mangle]
 pub extern "C" fn chatread_setup() -> c_int {
-    if setup().is_ok() { 0 } else { -1 }
+    result_to_c(setup())
 }
 
 #[no_mangle]
 pub extern "C" fn chatread_teardown() -> c_int {
-    if teardown().is_ok() { 0 } else { -1 }
+    result_to_c(teardown())
 }
