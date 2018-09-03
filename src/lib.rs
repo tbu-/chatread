@@ -217,17 +217,19 @@ fn loop_(data: Data) -> Result<(), Error> {
             }
         }
     }
+    let result;
     unsafe {
         // Empty line -> remove prompt.
         if *sys::rl_line_buffer == 0 {
             sys::rl_save_prompt();
             sys::rl_redisplay();
+            result = Ok(());
         } else {
-            (&data.real_stdout).write_all(b"\n");
+            result = (&data.real_stdout).write_all(b"\n").o("write(real_stdout, \"\\n\")");
         }
         sys::rl_callback_handler_remove();
     }
-    Ok(())
+    result
 }
 
 #[derive(Debug, Default)]
