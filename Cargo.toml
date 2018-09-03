@@ -1,0 +1,12 @@
+[package]
+name = "chatread"
+version = "0.0.1"
+authors = ["Tobias Bucher <tobiasbucher5991@gmail.com>"]
+
+[dependencies]
+buffer = "0.1.8"
+libc = "0.2.43"
+memchr = "2.0.2"
+mio = "0.6.15"
+nix = "0.11.0"
+readline-sys = { path = "sys" }

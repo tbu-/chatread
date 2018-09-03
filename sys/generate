@@ -1,0 +1,31 @@
+#!/bin/sh
+(
+echo "#![allow(bad_style)]"
+echo "extern crate libc;"
+echo "use libc::FILE;"
+bindgen \
+	--no-prepend-enum-name \
+	--blacklist-type '^FILE$' \
+	--whitelist-function '^add_history$' \
+	--whitelist-function '^rl_callback_handler_install$' \
+	--whitelist-function '^rl_callback_handler_remove$' \
+	--whitelist-function '^rl_callback_handler_remove$' \
+	--whitelist-function '^rl_callback_read_char$' \
+	--whitelist-function '^rl_copy_text$' \
+	--whitelist-function '^rl_redisplay$' \
+	--whitelist-function '^rl_replace_line$' \
+	--whitelist-function '^rl_resize_terminal$' \
+	--whitelist-function '^rl_restore_prompt$' \
+	--whitelist-function '^rl_save_prompt$' \
+	--whitelist-var '^rl_catch_signals$' \
+	--whitelist-var '^rl_catch_sigwinch$' \
+	--whitelist-var '^rl_end$' \
+	--whitelist-var '^rl_instream$' \
+	--whitelist-var '^rl_line_buffer$' \
+	--whitelist-var '^rl_outstream$' \
+	--whitelist-var '^rl_point$' \
+	bindgen.h
+echo
+) > src/lib.rs
+cargo fmt
+	#--opaque-type 'FILE' \
